@@ -1,0 +1,34 @@
+#!/usr/bin/env luajit
+
+-- Add the project root to Lua's module search path
+local handle = io.popen("readlink -f " .. arg[0])
+local real_path = handle:read("*l")
+handle:close()
+local script_dir = real_path:match("(.+)/[^/]+$")
+local root = script_dir .. "/.."
+package.path = root .. "/lib/?.lua;" .. package.path
+
+local tmux = require("tmux")
+local history = require("history")
+local projects = require("projects")
+local picker = require("picker")
+
+-- Get sorted project list and show picker
+local dirs = projects.sorted()
+local choice = picker.pick(dirs)
+
+if not choice then
+	os.exit(0)
+end
+
+-- Record the pick in history
+history.record(choice.path)
+
+-- Open in tmux
+if tmux.is_inside() then
+	-- Already in tmux: open a new window
+	tmux.new_window(choice.name, choice.path)
+else
+	-- Not in tmux: creat a new session and attach
+	tmux.new_session(choice.name, choice.path)
+end
