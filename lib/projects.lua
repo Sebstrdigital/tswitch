@@ -12,7 +12,6 @@ function M.scan()
 	end
 
 	for line in handle:lines() do
-		-- Remove trailing slash
 		local path = line:gsub("/$", "")
 		local name = path:match(".+/(.+)$")
 		if name then

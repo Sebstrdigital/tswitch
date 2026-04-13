@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Called by fzf on start to reload with enriched project data.
+# Reads sorted project order from the temp file passed as $1.
+# Outputs formatted rows preserving sort order.
+
+ORDER_FILE="$1"
+PROJECTS_DIR="$HOME/work/git"
+TMPDIR_ENRICH=$(mktemp -d)
+
+# Get active tmux window names
+declare -A tmux_wins
+while IFS= read -r name; do
+    tmux_wins["$name"]=1
+done < <(tmux list-windows -a -F '#{window_name}' 2>/dev/null)
+
+# Column widths (must match picker.lua)
+NAME_W=26
+BRANCH_W=30
+STATUS_W=7
+TMUX_W=7
+
+pad() {
+    local str="$1" width="$2"
+    printf "%-${width}s" "${str:0:$width}"
+}
+
+# Center a short string in a field of given width
+center() {
+    local str="$1" width="$2"
+    local len=${#str}
+    if [ "$len" -ge "$width" ]; then
+        printf "%s" "${str:0:$width}"
+        return
+    fi
+    local left=$(( (width - len) / 2 ))
+    local right=$(( width - len - left ))
+    printf "%${left}s%s%${right}s" "" "$str" ""
+}
+
+shorten_age() {
+    local a="$1"
+    a="${a% ago}"
+    a="${a/ minutes/m}"; a="${a/ minute/m}"
+    a="${a/ hours/h}"; a="${a/ hour/h}"
+    a="${a/ days/d}"; a="${a/ day/d}"
+    a="${a/ weeks/w}"; a="${a/ week/w}"
+    a="${a/ months/mo}"; a="${a/ month/mo}"
+    a="${a/ years/y}"; a="${a/ year/y}"
+    echo "$a"
+}
+
+# Launch all git queries in parallel, each writing to a numbered file
+idx=0
+while IFS=$'\t' read -r name path; do
+    (
+        branch=$(git -C "$path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if git -C "$path" diff --quiet HEAD 2>/dev/null; then
+            dirty=""
+        else
+            dirty="*"
+        fi
+        age_raw=$(git -C "$path" log -1 --format='%cr' 2>/dev/null || echo "")
+        age=$(shorten_age "$age_raw")
+
+        tmux_mark=""
+        [[ -n "${tmux_wins[$name]}" ]] && tmux_mark="o"
+
+        printf "%s%s%s%s%s" \
+            "$(pad "$name" $NAME_W)" \
+            "$(pad "$branch" $BRANCH_W)" \
+            "$(center "$dirty" $STATUS_W)" \
+            "$(center "$tmux_mark" $TMUX_W)" \
+            "$age" > "$TMPDIR_ENRICH/$idx"
+    ) &
+    idx=$((idx + 1))
+done < "$ORDER_FILE"
+
+wait
+
+# Output in original sorted order
+for ((i=0; i<idx; i++)); do
+    cat "$TMPDIR_ENRICH/$i"
+    echo
+done
+
+rm -rf "$TMPDIR_ENRICH"
